@@ -185,47 +185,52 @@ class GraphEngine:
         weight = similarity * (1 + usage * 0.1) * recency
         return min(weight, 1.0)  # Cap at 1.0
 
-    def auto_link_nodes(self, new_node_id: str, threshold: float = 0.5, limit: int = 3) -> List[Edge]:
+    def auto_link_nodes(self, new_node_id: str, threshold: float = 0.3, limit: int = 3) -> List[Edge]:
         """
-        Auto-link a new node to related nodes using vector similarity and keyword overlap.
-        Includes a limit per node to prevent graph spaghetti.
+        Auto-link a new node using Keyword Gravity (Pure SQLite/CPU).
+        Zero local embedding models required.
         """
         new_node = self.storage.get_node(new_node_id)
         if not new_node:
             return []
 
-        # 1. Get Semantic Similarities
-        try:
-            from ..retrieval.vector import VectorRetriever
-            vector_engine = VectorRetriever(self.storage)
-            semantic_results = vector_engine.search(new_node.content, top_k=50)
-            semantic_scores = {node_id: score for node_id, score in semantic_results if node_id != new_node_id}
-        except Exception as e:
-            logger.warning(f"Vector search failed: {e}")
-            semantic_scores = {}
-
         existing_nodes = self.storage.get_all_nodes()
         existing_nodes = [n for n in existing_nodes if n.id != new_node_id]
         
+        if not existing_nodes:
+            return []
+
         candidates = []
         new_keywords = set(new_node.keywords)
+        new_text = (new_node.title + " " + new_node.content).lower()
         
         for existing_node in existing_nodes:
-            semantic_score = semantic_scores.get(existing_node.id, 0.0)
-            
-            keyword_score = 0.0
+            # 1. Keyword Overlap (Primary Signal)
             existing_keywords = set(existing_node.keywords)
+            keyword_score = 0.0
             if new_keywords and existing_keywords:
                 overlap = len(new_keywords & existing_keywords)
                 union_size = len(new_keywords | existing_keywords)
                 keyword_score = overlap / union_size if union_size > 0 else 0
             
-            hybrid_score = (semantic_score * 0.7) + (keyword_score * 0.3)
+            # 2. Basic Text Overlap (Secondary Signal)
+            existing_text = (existing_node.title + " " + existing_node.content).lower()
+            text_score = 0.0
+            new_tokens = set(new_text.split())
+            existing_tokens = set(existing_text.split())
             
-            if hybrid_score >= threshold:
-                candidates.append((existing_node.id, hybrid_score))
+            if new_tokens and existing_tokens:
+                overlap = len(new_tokens & existing_tokens)
+                union_size = len(new_tokens | existing_tokens)
+                text_score = overlap / union_size if union_size > 0 else 0
+            
+            # Hybrid score (No models needed!)
+            final_score = (keyword_score * 0.8) + (text_score * 0.2)
+            
+            if final_score >= threshold:
+                candidates.append((existing_node.id, final_score))
         
-        # 2. Sort by score and take only the Top K (Limit)
+        # Sort and take Top K
         candidates.sort(key=lambda x: x[1], reverse=True)
         top_candidates = candidates[:limit]
 
@@ -233,7 +238,7 @@ class GraphEngine:
         for target_id, score in top_candidates:
             edge = self.link_nodes(new_node_id, target_id, EdgeType.RELATED_TO)
             created_edges.append(edge)
-            logger.info(f"Auto-linked {new_node_id} <-> {target_id} (score: {score:.2f})")
+            logger.info(f"Auto-linked {new_node_id} <-> {target_id} (keyword score: {score:.2f})")
         
         return created_edges
 

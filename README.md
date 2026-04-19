@@ -4,17 +4,22 @@ A lightweight knowledge graph plugin/middleware with token-optimized memory, hyb
 
 ## Quick Start
 
-### Installation
+### Installation (One-Command)
+
+Simply run the setup script to make the `kb` command available globally:
 
 ```bash
-pip install -e .
+chmod +x setup.sh && ./setup.sh
 ```
 
-### Basic Usage
+### Basic Usage (Global)
+
+Now you can go to **any folder** and start a new project memory:
 
 ```bash
-# Add knowledge to the base
-kb add "Machine learning is a subset of artificial intelligence"
+cd ~/my-project
+kb session bootstrap "project-name"
+```
 
 # Add a large file (like a technical manual or PDF transcript)
 kb add --file path/to/document.txt --source "manual"
@@ -42,14 +47,21 @@ kb stats
 
 BaseMem is optimized to store and link your previous AI conversations. 
 
-### Ingesting Gemini CLI History
-To bring a full Gemini session into your graph, point the tool to your local `.gemini` tmp folder:
+### Multi-Agent Autonomous Sync
+To automatically find your current Gemini CLI session file and sync the **entire high-detail transcript** into your private agent history node:
 ```bash
-kb session ingest "topic-name" --file "~/.gemini/tmp/basemem/chats/session-timestamp.json"
+kb session sync "topic-name" --agent-id "your-unique-suffix"
 ```
-*Tip: Use `kb session ingest` instead of `kb add` for chat history to keep the graph compact and avoid fragmentation.*
+
+### Manual Ingestion
+To manually bring a full Gemini session into your graph from a specific file:
+```bash
+kb session ingest "topic-name" --file "/home/zoro/.gemini/tmp/basemem/chats/session-timestamp.json"
+```
 
 ## Architecture
+
+BaseMem has been optimized into a **Zero-RAM "Dumb Storage" Layer** by default. Heavy AI models (like Torch, Transformers, FAISS) have been stripped from the core execution path to ensure it uses ~35MB RAM. All "intelligence" (summaries, keywords) is provided by the connected AI Agent, and Semantic Gravity uses fast Keyword Overlap instead of Vector Math.
 
 ### Core Components
 

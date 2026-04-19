@@ -21,6 +21,14 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+# Helper to find the sessions folder
+def get_session_dir():
+    # Base BaseMem install directory
+    base_dir = Path(__file__).parent.parent.parent.parent.absolute()
+    session_dir = base_dir / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
 
 @click.group()
 @click.option('--db', help='Database file path')
@@ -109,12 +117,12 @@ def ask(ctx, query, token_budget):
     storage = ctx.obj['storage']
     orchestrator = ContextOrchestrator(storage, token_budget=token_budget)
 
-    context = orchestrator.orchestrate(query)
+    context_packet = orchestrator.orchestrate(query)
 
     click.echo(f"\n🔍 Query: {query}\n")
     click.echo("📖 Context:")
-    click.echo(context.to_prompt_format())
-    click.echo(f"\n📊 Stats: {len(context.source_nodes)} nodes, {context.token_count} tokens")
+    click.echo(context_packet.to_prompt_format())
+    click.echo(f"\n📊 Stats: {len(context_packet.source_nodes)} nodes, {context_packet.token_count} tokens")
 
 
 @cli.command()
@@ -156,10 +164,10 @@ def explain(ctx, concept):
     storage = ctx.obj['storage']
     orchestrator = ContextOrchestrator(storage)
 
-    context = orchestrator.orchestrate(concept)
+    context_packet = orchestrator.orchestrate(concept)
 
     click.echo(f"\n📚 Explaining: {concept}\n")
-    click.echo(context.to_prompt_format())
+    click.echo(context_packet.to_prompt_format())
 
 
 @cli.command()
@@ -258,7 +266,7 @@ def serve(ctx, port):
     try:
         from serverimport app
         click.echo(f"🌐 Starting BaseMem server on http://localhost:{port}")
-        click.echo(f"📊 Open http://localhost:{port}/../../graph_visualization.html")
+        click.echo(f"📊 Open http://localhost:{port} in your browser")
         click.echo("Press Ctrl+C to stop")
         app.run(host="0.0.0.0", port=port, debug=False)
     except ImportError:
@@ -284,24 +292,21 @@ def review(ctx, topic):
     click.echo("\n--- RECENT HISTORY ---")
     
     # Check if we have a "Main History" node
-    main_history = next((n for n in history if n.metadata.get("is_main_history")), None)
+    main_history = next((n for n in history if n.metadata.get("is_main_history") or n.metadata.get("is_private_history")), None)
     
     if main_history:
-        # Parse the entries from the single large node
-        # Entries are separated by "--- [TIMESTAMP] SENDER ---"
+        # Parse the entries
         entries = main_history.content.split("--- [")
-        # The first part is usually the "Full conversation history..." header, skip it
         actual_entries = entries[1:] 
         
         for entry in actual_entries[-5:]: # Show last 5
-            # Restore the separator for display
             click.echo(f"--- [{entry.strip()}")
             click.echo("")
     else:
-        # Fallback for old multi-node history
+        # Fallback
         for chat in history[-5:]:
-            sender = chat.metadata.get("sender", "unknown").upper()
-            click.echo(f"[{sender}] {chat.content[:100]}...")
+            agent_id = chat.metadata.get("agent_id", "unknown").upper()
+            click.echo(f"[{agent_id}] {chat.content[:100]}...")
 
 
 @cli.group()
@@ -330,252 +335,218 @@ def session():
 
 
 @session.command()
-@click.argument('topic')
-@click.option('--file', help='Markdown file to export to')
+@click.argument('topic', required=False)
 @click.pass_context
-def export(ctx, topic, file):
-    """Export session summary to a markdown file"""
+def context(ctx, topic):
+    """Retrieve the summary and participant registry for the current project (Centralized)"""
+    if not topic or topic == ".":
+        topic = Path.cwd().name
+        
     from storage.sessions import SessionManager
     storage = ctx.obj['storage']
     manager = SessionManager(storage)
     
     session_node = manager.get_or_create_session(topic)
+    peers = session_node.metadata.get("participating_agents", [])
     
-    output_file = file or f".basemem-{topic}-summary.md"
-    with open(output_file, "w") as f:
-        f.write(f"# Session Summary: {topic}\n\n")
-        f.write(session_node.content)
-        f.write(f"\n\n---\n*Last Updated: {session_node.last_accessed.isoformat()}*")
-    
-    click.echo(f"✓ Exported session summary for '{topic}' to {output_file}")
-
-
-@session.command(name='import')
-@click.argument('topic')
-@click.option('--file', help='Markdown file to import from')
-@click.pass_context
-def import_summary(ctx, topic, file):
-    """Import session summary from a markdown file"""
-    from storage.sessions import SessionManager
-    storage = ctx.obj['storage']
-    manager = SessionManager(storage)
-    
-    input_file = file or f".basemem-{topic}-summary.md"
-    if not Path(input_file).exists():
-        click.echo(f"Error: File {input_file} not found")
-        return
-        
-    with open(input_file, "r") as f:
-        content = f.read()
-    
-    # Simple parsing to remove header if present
-    if content.startswith("# Session Summary:"):
-        lines = content.split("\n")
-        # Find the first non-empty line after the header
-        idx = 1
-        while idx < len(lines) and (not lines[idx].strip() or lines[idx].startswith("# Session Summary:")):
-            idx += 1
-        
-        # Remove footer if present
-        end_idx = len(lines)
-        for i, line in enumerate(lines):
-            if line.strip() == "---" and i > idx:
-                end_idx = i
-                break
-        
-        summary_content = "\n".join(lines[idx:end_idx]).strip()
+    click.echo(f"\n🧠 Project Memory: {topic}\n")
+    click.echo("--- CURRENT SUMMARY ---")
+    click.echo(session_node.content)
+    click.echo("\n--- PARTICIPATING AGENTS ---")
+    if peers:
+        for peer in peers:
+            click.echo(f"- {peer} (Read with: `kb session read \"{topic}\" --agent-id \"{peer}\" --last 5`)")
     else:
-        summary_content = content.strip()
-
-    manager.update_summary(topic, summary_content)
-    click.echo(f"✓ Imported session summary for '{topic}' from {input_file}")
+        click.echo("No previous agents recorded for this topic.")
+    click.echo(f"\n*Last System Sync: {session_node.last_accessed.isoformat()}*")
 
 
 @session.command()
-@click.argument('topic')
-@click.option('--model', default='facebook/bart-large-cnn', help='HuggingFace model name (e.g., t5-small, facebook/bart-large-cnn)')
-@click.pass_context
-def summarize(ctx, topic, model):
-    """Generate a local summary of the session history"""
-    from storage.sessions import SessionManager
-    from ..processing.summarizer import LocalSummarizer
-    
-    storage = ctx.obj['storage']
-    manager = SessionManager(storage)
-    
-    history = manager.get_session_history(topic)
-    if not history:
-        click.echo(f"No history found for topic '{topic}' to summarize.")
-        return
-        
-    click.echo(f"⏳ Generating local summary for '{topic}' using {model}...")
-    summarizer = LocalSummarizer(model_name=model)
-    summary_text = summarizer.summarize_chat_history(history)
-    
-    if summary_text:
-        manager.update_summary(topic, summary_text)
-        click.echo("\n✨ Local Summary Generated:")
-        click.echo(summary_text)
-        click.echo(f"\n✓ Session summary for '{topic}' updated in database.")
-    else:
-        click.echo(f"Error: Local summarization failed with model {model}.")
-
-
-@session.command()
-@click.argument('topic')
-@click.argument('summary_text')
-@click.pass_context
-def update(ctx, topic, summary_text):
-    """Update session summary directly (useful for AI agents)"""
-    from storage.sessions import SessionManager
-    storage = ctx.obj['storage']
-    manager = SessionManager(storage)
-    
-    manager.update_summary(topic, summary_text)
-    click.echo(f"✓ Session summary for '{topic}' updated directly.")
-
-
-@session.command()
-@click.argument('topic')
+@click.argument('topic', required=False)
 @click.argument('message')
-@click.option('--summary', help='Direct summary text (skips local summarization)')
+@click.option('--summary', help='Direct summary text from AI')
+@click.option('--keywords', help='Comma-separated keywords from AI')
+@click.option('--agent-id', default='default', help='Unique ID for this AI session/agent')
 @click.option('--sender', default='ai', help='Sender of the message')
-@click.option('--model', default='t5-small', help='Model for local summarization fallback')
 @click.pass_context
-def turn(ctx, topic, message, summary, sender, model):
-    """Log message, summarize history, and export (Complete Turn)"""
+def turn(ctx, topic, message, summary, keywords, agent_id, sender):
+    """Log message and save AI-provided metadata (Centralized Mode)"""
+    if not topic or topic == ".":
+        topic = Path.cwd().name
+        
     from storage.sessions import SessionManager
-    from ..processing.summarizer import LocalSummarizer
-    
     storage = ctx.obj['storage']
     manager = SessionManager(storage)
     
-    # 1. Log the chat
-    manager.log_chat(topic, message, sender=sender)
+    # 1. Log chat
+    manager.log_chat(topic, message, sender=sender, agent_id=agent_id)
     
-    # 2. Get/Generate Summary
+    # 2. Update the shared topic summary
     if summary:
-        summary_text = summary
-    else:
-        # Fallback to local model if no summary provided
-        history = manager.get_session_history(topic)
-        summarizer = LocalSummarizer(model_name=model)
-        summary_text = summarizer.summarize_chat_history(history)
-    
-    if summary_text:
-        manager.update_summary(topic, summary_text)
+        session_node = manager.update_summary(topic, summary)
         
-        # 3. Export
-        output_file = f".basemem-{topic}-summary.md"
+        # 3. Centralized Export
+        session_dir = get_session_dir()
+        output_file = session_dir / f".basemem-{topic}-summary.md"
+        peers = session_node.metadata.get("participating_agents", [])
+        
         with open(output_file, "w") as f:
             f.write(f"# Session Summary: {topic}\n\n")
-            f.write(summary_text)
-            f.write(f"\n\n---\n*Last Updated: {manager.get_or_create_session(topic).last_accessed.isoformat()}*")
+            f.write(summary)
+            f.write("\n\n---\n")
+            if peers:
+                f.write(f"### 👥 Participating Agents (Histories available):\n")
+                for peer in peers:
+                    f.write(f"- `{peer}` (Read with: `kb session read \"{topic}\" --agent-id \"{peer}\"`)\n")
+            f.write(f"\n*Last Updated: {session_node.last_accessed.isoformat()}*")
             
-        click.echo(f"✓ Session '{topic}' updated and exported to {output_file}")
-    else:
-        click.echo("Error: Summarization failed.")
+        click.echo(f"✓ Project Brain for '{topic}' updated and exported to {output_file.name}")
+    
+    click.echo(f"✓ Turn logged (Agent: {agent_id})")
 
 
 @session.command()
-@click.argument('topic')
-@click.argument('message')
-@click.option('--sender', default='ai', help='Sender of the message')
+@click.argument('topic', required=False)
+@click.option('--agent-id', required=True, help='Your unique session/agent suffix')
 @click.pass_context
-def log(ctx, topic, message, sender):
-    """Log a raw chat message to the session"""
-    from storage.sessions import SessionManager
-    storage = ctx.obj['storage']
-    manager = SessionManager(storage)
+def sync(ctx, topic, agent_id):
+    """Automatically find and sync your FULL local chat history to the graph (Centralized)"""
+    if not topic or topic == ".":
+        topic = Path.cwd().name
+        
+    import json
+    import glob
     
-    chat_node = manager.log_chat(topic, message, sender=sender)
-    click.echo(f"✓ Logged {sender} message to session '{topic}' (Node: {chat_node.id[:8]})")
-
-
-@session.command()
-@click.argument('topic')
-@click.option('--file', '-f', required=True, help='Path to transcript JSON/Text file')
-@click.pass_context
-def ingest(ctx, topic, file):
-    """Save a full transcript as a single deterministic node (updates existing)"""
-    from storage.sessions import SessionManager
-    storage = ctx.obj['storage']
-    manager = SessionManager(storage)
+    pattern = f"/home/zoro/.gemini/tmp/*/chats/session-*-{agent_id}.json"
+    files = glob.glob(pattern)
     
-    file_path = Path(file)
-    if not file_path.exists():
-        click.echo(f"Error: File {file} not found.")
+    if not files:
+        click.echo(f"Error: Could not find a local chat file ending in '{agent_id}'")
         return
         
-    with open(file_path, 'r') as f:
-        content = f.read()
+    chat_file = files[0]
+    click.echo(f"⏳ Syncing from: {chat_file}")
+    
+    try:
+        with open(chat_file, "r") as f:
+            data = json.load(f)
+            
+        transcript = f"Full conversation history for topic: {topic}\n"
+        messages = data.get("messages", [])
+        if not messages and isinstance(data, list): messages = data
+
+        for msg in messages:
+            sender = msg.get("type", "unknown").upper()
+            if sender == "INFO": continue
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join([p["text"] for p in content if "text" in p])
+            timestamp = msg.get("timestamp", "unknown")
+            transcript += f"\n\n--- [{timestamp}] {sender} ---\n{content}"
+
+        # Save
+        from storage.sessions import SessionManager
+        storage_instance = ctx.obj['storage']
+        manager = SessionManager(storage_instance)
+        manager.ingest_transcript(topic, transcript)
         
-    node = manager.ingest_transcript(topic, content)
-    click.echo(f"✓ Full transcript for '{topic}' saved as node: {node.id}")
-    click.echo(f"✓ Re-running this command for '{topic}' will update this exact node instead of duplicating.")
-
-
-@session.command()
-@click.argument('topic')
-@click.pass_context
-def read(ctx, topic):
-    """Read the full transcript node for a topic"""
-    storage = ctx.obj['storage']
-    node_id = f"full-transcript-{topic.lower().replace(' ', '-')}"
-    node = storage.get_node(node_id)
-    if node:
-        click.echo(f"\n📖 Full Transcript for '{topic}':\n")
-        click.echo(node.content)
-    else:
-        # Fallback to main history node
-        history_node_id = f"main-history-{topic.lower().replace(' ', '-')}"
-        node = storage.get_node(history_node_id)
+        # Meta Fix
+        history_id = f"history-{agent_id}-{topic.lower().replace(' ', '-')}"
+        old_id = f"full-transcript-{topic.lower().replace(' ', '-')}"
+        
+        node = storage_instance.get_node(old_id)
         if node:
-            click.echo(f"\n📖 Main History for '{topic}':\n")
-            click.echo(node.content)
-        else:
-            click.echo(f"No full transcript or main history node found for topic '{topic}'.")
+            node.id = history_id
+            node.title = f"History ({agent_id}): {topic}"
+            node.metadata["agent_id"] = agent_id
+            node.metadata["is_private_history"] = True
+            storage_instance.add_node(node)
+            storage_instance.delete_node(old_id)
+
+        # Refresh the shared summary registry
+        session_node = manager.update_summary(topic, manager.get_or_create_session(topic).content)
+        
+        # Centralized Export
+        session_dir = get_session_dir()
+        output_file = session_dir / f".basemem-{topic}-summary.md"
+        peers = session_node.metadata.get("participating_agents", [])
+        with open(output_file, "w") as f:
+            f.write(f"# Session Summary: {topic}\n\n")
+            f.write(session_node.content)
+            f.write("\n\n---\n")
+            if peers:
+                f.write(f"### 👥 Participating Agents:\n")
+                for peer in peers:
+                    f.write(f"- `{peer}`\n")
+            f.write(f"\n*Last Updated: {session_node.last_accessed.isoformat()}*")
+
+        click.echo(f"✓ FULL high-fidelity history synced and summary exported.")
+    except Exception as e:
+        click.echo(f"Error during sync: {e}")
 
 
 @session.command()
-@click.argument('topic')
+@click.argument('topic', required=False)
+@click.option('--agent-id', default='default', help='AI agent history to read')
+@click.option('--last', type=int, help='Number of recent entries to read')
+@click.pass_context
+def read(ctx, topic, agent_id, last):
+    """Read history for a specific topic and agent"""
+    if not topic or topic == ".":
+        topic = Path.cwd().name
+        
+    storage = ctx.obj['storage']
+    node_id = f"history-{agent_id}-{topic.lower().replace(' ', '-')}"
+    node = storage.get_node(node_id)
+    
+    if node:
+        click.echo(f"\n📖 History for '{topic}' (Agent: {agent_id}):\n")
+        if last:
+            entries = node.content.split("--- [")
+            header = entries[0]
+            actual_entries = entries[1:]
+            click.echo(header.strip())
+            for entry in actual_entries[-last:]:
+                click.echo(f"--- [{entry.strip()}")
+                click.echo("")
+        else:
+            click.echo(node.content)
+    else:
+        click.echo(f"No private history found for agent '{agent_id}'.")
+
+
+@session.command()
+@click.argument('topic', required=False)
 @click.option('--path', default='.', help='Folder to bootstrap')
 @click.pass_context
 def bootstrap(ctx, topic, path):
-    """Bootstrap a new project with AGENTS.md and a fresh database"""
+    """Bootstrap a new project with AGENTS.md"""
+    if not topic or topic == ".":
+        topic = Path.cwd().name
+        
     storage = ctx.obj['storage']
     from storage.sessions import SessionManager
     manager = SessionManager(storage)
-    
-    # 1. Initialize session in DB
     manager.get_or_create_session(topic)
     
     target_dir = Path(path).absolute()
     agents_file = target_dir / "AGENTS.md"
     
-    # 2. Create AGENTS.md with the specific topic for THIS folder
-    content = f"""# 🧠 Project Memory Protocol: {topic}
+    content = f"""# 🧠 AI Agent Memory Protocol: {topic}
 
-## 1. Context Loading (Start of Session)
-- **High Level**: Read `.basemem-{topic}-summary.md`
-- **Deep Detail**: Run `kb session read "{topic}"`
+## 📥 START OF SESSION
+Run: `kb session context` to see shared status.
 
-## 2. Automatic Memory (After every response)
-You MUST run this command after every turn to keep the graph updated:
-```bash
-kb session turn "{topic}" "<Brief technical log of this response>" --sender ai
-```
+## 📤 DURING SESSION
+Log every turn: `kb session turn --agent-id "<your-id>" "<Short log>" --summary "<Full summary>" --sender ai`
 
-## 3. Storage
-- All memory is saved to the local `basemem.db` in this folder.
-- Do not create fragmented nodes; always use the `turn` command to append to the Main History.
+## 💾 END OF SESSION
+Sync full history: `kb session sync --agent-id "<your-id>"`
 """
     with open(agents_file, "w") as f:
         f.write(content)
         
-    click.echo(f"🚀 Project '{topic}' bootstrapped in {target_dir}")
-    click.echo(f"✓ Created project-specific AGENTS.md")
-    click.echo(f"✓ Future AIs will now automatically use the '{topic}' memory.")
+    click.echo(f"🚀 Folder '{topic}' bootstrapped!")
 
 
 if __name__ == '__main__':

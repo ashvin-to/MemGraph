@@ -56,23 +56,23 @@ BaseMem/
 - ✅ `EdgeType` - Enhanced with `PART_OF` and `RELATED_TO`
 
 ### 2. **Session Memory System** (`storage/sessions.py`)
-- ✅ **2-Node Hierarchical Structure**: Single 'Summary' node + single 'Main History' node per project.
-- ✅ **Appending History**: Turns are appended to a single node to prevent graph clutter.
-- ✅ **Deterministic IDs**: Projects are tied to topic names for cross-session continuity.
+- ✅ **Multi-Agent Collaborative Structure**: Single shared 'Summary' node + multiple private 'History' nodes per agent/session.
+- ✅ **Automatic Context Sync**: `sync` command parses massive JSON transcripts from local `.gemini` folders into the graph.
+- ✅ **Deterministic IDs**: Projects and Agents are tied to deterministic IDs for cross-session continuity without duplication.
 
 ### 3. **Semantic Gravity** (`graph/engine.py`)
-- ✅ **Vector-Based Auto-linking**: Automatically connects project islands based on embedding similarity.
-- ✅ **Hybrid Scoring**: Combines vector similarity (70%) and keyword overlap (30%).
-- ✅ **Top-K Limit**: Prevents "spaghetti balls" by limiting edges per node.
+- ✅ **Keyword-Based Auto-linking**: Automatically connects project islands based on shared AI-generated tags (Zero-RAM execution).
+- ✅ **Hybrid Scoring**: Combines tag overlap (80%) and general text matching (20%).
+- ✅ **Top-K Limit**: Prevents "spaghetti balls" by capping connections per node to the top 3 strongest.
 
 ### 4. **Web Hub** (`server.py` + `graph_visualization.html`)
 - ✅ **Obsidian Galaxy**: Interactive D3.js visualizer with vibrant color coding.
 - ✅ **Orbit Mode**: Rotating planetary view of the graph.
 - ✅ **Full Node Control**: In-browser Node Deletion, History Reading, and Turn submission.
 
-### 5. **Local Processing** (`processing/summarizer.py`)
-- ✅ **BART/T5 Summarization**: Purely local background summarization using HuggingFace.
-- ✅ **Seq2Seq Architecture**: Uses `AutoModelForSeq2SeqLM` for robust local generation.
+### 5. **Zero-RAM Architecture** (`processing/`)
+- ✅ **"Dumb Storage" Layer**: Tool no longer loads massive models (Torch, Transformers) at runtime.
+- ✅ **Offloaded Intelligence**: The AI Agent is responsible for summarizing and keyword extraction via CLI flags, bringing the RAM footprint to near 0MB.
 
 ---
 
@@ -97,11 +97,11 @@ SQLite Database
 ```
 AI Response
   ↓
-Append to "Main History" node
+AI Generates Summary & Keywords
   ↓
-Local Summarizer (BART/T5) updates "Summary" node
+CLI updates "History (Agent-ID)" and "Summary" nodes
   ↓
-Semantic Gravity re-links project to Galaxy
+Semantic Gravity re-links project to Galaxy (via keywords)
   ↓
 Export context to .basemem-topic-summary.md
 ```
@@ -110,14 +110,14 @@ Export context to .basemem-topic-summary.md
 
 ## 📦 Dependencies
 
-### Core & Search
+### Core Storage & API
 - `click`, `flask`, `flask-cors`
-- `rank-bm25`, `sentence-transformers`, `faiss-cpu`, `scikit-learn`
-- `transformers`, `torch` (for local summarization)
-- `nltk` (tokenization)
-
-### Model Context Protocol
+- `aiofiles`, `pydantic`, `tqdm`
 - `mcp` - FastMCP for direct AI tool access
+
+### Optional (AI/Vector)
+- `sentence-transformers`, `faiss-cpu`, `scikit-learn`
+- `transformers`, `torch`, `nltk`
 
 ---
 

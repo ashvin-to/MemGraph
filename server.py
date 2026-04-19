@@ -27,22 +27,60 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Initialize BaseMem components
-db = StorageManager("basemem.db")
-retrieval = RetrievalEngine(db)
-graph = GraphEngine(db)
-orchestrator = ContextOrchestrator(db)
+# Initialize BaseMem components (Lazily)
+_db = None
+_retrieval = None
+_graph = None
+_orchestrator = None
+
+def get_db():
+    global _db
+    if _db is None:
+        _db = StorageManager("basemem.db")
+    return _db
+
+def get_retrieval():
+    global _retrieval
+    if _retrieval is None:
+        _retrieval = RetrievalEngine(get_db())
+    return _retrieval
+
+def get_graph():
+    global _graph
+    if _graph is None:
+        _graph = GraphEngine(get_db())
+    return _graph
+
+def get_orchestrator():
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = ContextOrchestrator(get_db())
+    return _orchestrator
+
+
+@app.route("/", methods=["GET"])
+def index():
+    """Serve the galaxy visualization UI"""
+    try:
+        # Find the html file in the project root
+        ui_path = Path(__file__).parent.parent.parent / "graph_visualization.html"
+        with open(ui_path, "r") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error loading UI: {str(e)}", 500
 
 
 @app.route("/api/graph", methods=["GET"])
-def get_graph():
+def get_graph_data():
     """Get full graph data for visualization"""
     try:
-        nodes = db.get_all_nodes()
+        db_instance = get_db()
+        graph_instance = get_graph()
+        nodes = db_instance.get_all_nodes()
         edges = []
         
         for node in nodes:
-            edges.extend(db.get_edges(from_id=node.id))
+            edges.extend(db_instance.get_edges(from_id=node.id))
         
         # Convert to JSON-serializable format
         nodes_data = [
@@ -73,7 +111,7 @@ def get_graph():
         return jsonify({
             "nodes": nodes_data,
             "edges": edges_data,
-            "stats": graph.get_graph_stats(),
+            "stats": graph_instance.get_graph_stats(),
         })
     except Exception as e:
         logger.error(f"Error getting graph: {e}")
@@ -84,12 +122,14 @@ def get_graph():
 def get_node(node_id):
     """Get single node with neighbors"""
     try:
-        node = db.get_node(node_id)
+        db_instance = get_db()
+        graph_instance = get_graph()
+        node = db_instance.get_node(node_id)
         if not node:
             return jsonify({"error": "Node not found"}), 404
         
-        neighbors = graph.get_neighbors(node_id, depth=1)
-        edges = db.get_edges(from_id=node_id)
+        neighbors = graph_instance.get_neighbors(node_id, depth=1)
+        edges = db_instance.get_edges(from_id=node_id)
         
         return jsonify({
             "node": {
@@ -122,6 +162,17 @@ def get_node(node_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/node/<node_id>", methods=["DELETE"])
+def delete_node(node_id):
+    """Delete a specific node"""
+    try:
+        db_instance = get_db()
+        db_instance.delete_node(node_id)
+        return jsonify({"status": "success", "deleted": node_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/search", methods=["POST"])
 def search():
     """Search knowledge base"""
@@ -132,7 +183,8 @@ def search():
         if not query:
             return jsonify({"error": "Query required"}), 400
         
-        results = retrieval.retrieve(query, top_k=10)
+        retrieval_instance = get_retrieval()
+        results = retrieval_instance.retrieve(query, top_k=10)
         
         return jsonify({
             "query": query,
@@ -163,7 +215,8 @@ def ask():
         if not query:
             return jsonify({"error": "Query required"}), 400
         
-        context_packet = orchestrator.orchestrate(query)
+        orchestrator_instance = get_orchestrator()
+        context_packet = orchestrator_instance.orchestrate(query)
         
         return jsonify({
             "query": query,
@@ -184,11 +237,13 @@ def ask():
 def stats():
     """Get knowledge base statistics"""
     try:
-        stats = graph.get_graph_stats()
-        nodes = db.get_all_nodes()
+        db_instance = get_db()
+        graph_instance = get_graph()
+        stats_data = graph_instance.get_graph_stats()
+        nodes = db_instance.get_all_nodes()
         
         return jsonify({
-            **stats,
+            **stats_data,
             "avg_node_weight": sum(n.weight for n in nodes) / len(nodes) if nodes else 0,
         })
     except Exception as e:
@@ -210,7 +265,8 @@ def session_turn():
         if not topic or not message:
             return jsonify({"error": "Topic and message required"}), 400
 
-        manager = SessionManager(db)
+        db_instance = get_db()
+        manager = SessionManager(db_instance)
         manager.log_chat(topic, message, sender=sender)
 
         if summary:
@@ -253,7 +309,8 @@ def session_bootstrap():
         if not topic:
             return jsonify({"error": "Topic required"}), 400
 
-        manager = SessionManager(db)
+        db_instance = get_db()
+        manager = SessionManager(db_instance)
         manager.get_or_create_session(topic)
 
         # Create AGENTS.md in the target path
@@ -290,10 +347,11 @@ kb session turn "{topic}" "<Brief log of this turn>" --sender ai
 def session_read(topic):
     """Read the full history for a topic"""
     try:
-        manager = SessionManager(db)
+        db_instance = get_db()
+        manager = SessionManager(db_instance)
         # 1. Try deterministic ID first
         history_node_id = f"main-history-{topic.lower().replace(' ', '-')}"
-        node = db.get_node(history_node_id)
+        node = db_instance.get_node(history_node_id)
         
         # 2. If not found, find the summary node and look for linked conversation nodes
         if not node:
@@ -314,16 +372,6 @@ def session_read(topic):
                 "node_id": node.id
             })
         return jsonify({"error": "History not found"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/node/<node_id>", methods=["DELETE"])
-def delete_node(node_id):
-    """Delete a specific node"""
-    try:
-        db.delete_node(node_id)
-        return jsonify({"status": "success", "deleted": node_id})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

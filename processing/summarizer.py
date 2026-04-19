@@ -2,39 +2,50 @@
 
 import logging
 from typing import List, Optional
-try:
-    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-    import torch
-except ImportError:
-    AutoModelForSeq2SeqLM = None
-    AutoTokenizer = None
 
 logger = logging.getLogger(__name__)
 
 class LocalSummarizer:
-    """Uses local HuggingFace models to summarize text chunks"""
+    """Uses local HuggingFace models to summarize text chunks with lazy loading to save RAM"""
 
     def __init__(self, model_name: str = "facebook/bart-large-cnn"):
         self.model_name = model_name
         self.model = None
         self.tokenizer = None
-        self._init_model()
 
     def _init_model(self):
-        """Initialize or switch the transformers model"""
-        if AutoModelForSeq2SeqLM and AutoTokenizer:
-            try:
-                logger.info(f"Loading local model {self.model_name}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
-                logger.info(f"Local model {self.model_name} ready")
-            except Exception as e:
-                logger.error(f"Failed to load model {self.model_name}: {e}")
-        else:
-            logger.warning("Transformers library not installed. Local summarization disabled.")
+        """Lazy initialization of the transformers model"""
+        if self.model is not None:
+            return
+
+        try:
+            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+            logger.info(f"Loading local model {self.model_name} into RAM...")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+            logger.info(f"Local model {self.model_name} ready")
+        except Exception as e:
+            logger.error(f"Failed to load model {self.model_name}: {e}")
+
+    def unload(self):
+        """Explicitly free RAM by unloading the model"""
+        if self.model is not None:
+            logger.info(f"Unloading model {self.model_name} from RAM...")
+            del self.model
+            del self.tokenizer
+            self.model = None
+            self.tokenizer = None
+            
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
 
     def summarize(self, text: str, max_length: int = 150, min_length: int = 30) -> Optional[str]:
         """Summarize a block of text using manual tokenization/generation"""
+        self._init_model() # Load on demand
+        
         if not self.model or not self.tokenizer:
             return None
         
@@ -49,7 +60,6 @@ class LocalSummarizer:
                 truncation=True
             )
             
-            # Use CPU for generation to ensure compatibility
             summary_ids = self.model.generate(
                 inputs["input_ids"], 
                 num_beams=4, 
@@ -58,7 +68,8 @@ class LocalSummarizer:
                 early_stopping=True
             )
             
-            return self.tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+            summary = self.tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+            return summary
         except Exception as e:
             logger.error(f"Summarization error: {e}")
             return None

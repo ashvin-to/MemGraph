@@ -46,48 +46,51 @@ class SessionManager:
         self.storage.add_node(session_node)
         return session_node
 
-    def log_chat(self, topic: str, content: str, sender: str = "ai") -> Node:
+    def log_chat(self, topic: str, content: str, sender: str = "ai", agent_id: str = "default") -> Node:
         """
-        Append a chat message to a single 'Main History' node for the topic.
-        This ensures only one 'Main' node exists per topic.
+        Append a chat message to a specific agent's history node.
+        This allows multiple AIs to have separate full histories while sharing a summary.
         """
         session_node = self.get_or_create_session(topic)
         
-        # Deterministic ID for the Main History node
-        history_node_id = f"main-history-{topic.lower().replace(' ', '-')}"
+        # Unique ID per Agent/Session for THIS topic
+        history_node_id = f"history-{agent_id}-{topic.lower().replace(' ', '-')}"
         
         history_node = self.storage.get_node(history_node_id)
         
         timestamp = datetime.utcnow().isoformat()
         new_entry = f"\n\n--- [{timestamp}] {sender.upper()} ---\n{content}"
         
-        # Extract new keywords from the content to keep searchability high
+        # Extract keywords
         new_words = [w.lower() for w in content.split() if len(w) > 4 and w.isalnum()]
-        
         if history_node:
             # Append to existing history
             history_node.content += new_entry
             history_node.last_accessed = datetime.utcnow()
-            
-            # Merge keywords (unique set)
-            existing_keywords = set(history_node.keywords)
-            existing_keywords.update(new_words)
-            history_node.keywords = list(existing_keywords)[:50] # Cap at 50
-            
+
+            # Ensure agent_id is in metadata
+            history_node.metadata["agent_id"] = agent_id
+
+            # Merge keywords
+            existing = set(history_node.keywords)
+            existing.update(new_words)
+            history_node.keywords = list(existing)[:50]
+
             self.storage.add_node(history_node)
         else:
-            # Create the first history node
+            # Create a new private history node for this specific agent/session
             history_node = Node(
                 id=history_node_id,
-                title=f"Main History: {topic}",
-                content=f"Full conversation history for topic: {topic}{new_entry}",
+                title=f"History ({agent_id}): {topic}",
+                content=f"Private conversation history for {agent_id} on topic: {topic}{new_entry}",
                 node_type=NodeType.CONVERSATION,
                 keywords=new_words[:20],
-                metadata={"topic": topic, "is_main_history": True}
+                metadata={"topic": topic, "agent_id": agent_id, "is_private_history": True}
             )
+
             self.storage.add_node(history_node)
 
-            # Link it to the summary node once
+            # Link it to the SHARED summary node
             edge = Edge(
                 from_id=history_node.id,
                 to_id=session_node.id,
@@ -96,32 +99,43 @@ class SessionManager:
                 confidence=1.0
             )
             self.storage.add_edge(edge)
-            
-        # Trigger Global Auto-Linking to connect project islands
-        try:
-            from graph.engine import GraphEngine
-            graph_engine = GraphEngine(self.storage)
-            # Find and create semantic connections across the whole graph
-            graph_engine.auto_link_nodes(history_node.id, threshold=0.15)
-            graph_engine.auto_link_nodes(session_node.id, threshold=0.15)
-        except Exception as e:
-            logger.warning(f"Auto-linking failed: {e}")
         
+        # Trigger Global Auto-Linking (Keyword-Only)
+        try:
+            self.graph.auto_link_nodes(history_node.id, threshold=0.25)
+        except:
+            pass
+            
         return history_node
 
     def update_summary(self, topic: str, new_summary: str) -> Node:
         """
-        Update the content of the session summary node.
+        Update the content of the session summary node and find all peers.
         """
         session_node = self.get_or_create_session(topic)
         session_node.content = new_summary
         session_node.last_accessed = datetime.utcnow()
         
-        # Increment version in metadata
+        # Increment version
         version = session_node.metadata.get("version", 1)
         session_node.metadata["version"] = version + 1
         
+        # FIND ALL PEERS: Search for any history nodes linked to this topic via edges
+        peers = []
+        neighbor_ids = self.storage.get_neighbors(session_node.id, edge_type=EdgeType.PART_OF)
+        for nid in neighbor_ids:
+            node = self.storage.get_node(nid)
+            if node and node.node_type == NodeType.CONVERSATION:
+                agent_id = node.metadata.get("agent_id")
+                if agent_id and agent_id not in peers:
+                    peers.append(agent_id)
+        
+        # Save peer list to metadata for discovery
+        session_node.metadata["participating_agents"] = peers
+        
+        # SINGLE ATOMIC SAVE
         self.storage.add_node(session_node)
+
         return session_node
 
     def get_session_history(self, topic: str) -> List[Node]:

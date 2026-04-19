@@ -17,13 +17,16 @@ class StorageManager:
 
     def __init__(self, db_path: Optional[str] = None):
         """Initialize storage manager"""
-        # Auto-detect db in current directory if not provided
+        # DEFAULT: Use the central global database
+        # This ensures all folders share the same 'Brain'
         if db_path is None:
-            db_path = "basemem.db"
+            # Absolute path to the central database
+            db_path = "/mnt/Storage/BaseMem/basemem.db"
             
         self.db_path = Path(db_path)
-        # Ensure we don't accidentally create it in a system folder
-        if not self.db_path.is_absolute() and not (Path.cwd() / self.db_path).parent.exists():
+        
+        # Create parent directories if needed
+        if not self.db_path.parent.exists():
              self.db_path.parent.mkdir(parents=True, exist_ok=True)
              
         # Enable thread-safe mode for Flask/multi-threaded use
