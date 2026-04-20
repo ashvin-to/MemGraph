@@ -36,13 +36,23 @@ class VectorRetriever:
         return self.model
 
     def _unload_model(self):
-        """Unload the model to free up RAM"""
+        """Unload the model to free up RAM/CUDA memory immediately"""
         if self.model is not None:
             logger.info(f"Unloading embedding model {self.model_name} from RAM...")
             del self.model
             self.model = None
+            
+            # Force PyTorch and System to release all memory
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+                
             import gc
             gc.collect()
+            logger.info("RAM Purge Complete.")
 
     def _build_index(self):
         """Build FAISS index from node embeddings and UNLOAD model"""

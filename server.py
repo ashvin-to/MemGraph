@@ -1,4 +1,4 @@
-"""Web server for BaseMem visualization and API"""
+"""Web server for BaseMem visualization and API (Storage Only Version)"""
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -11,11 +11,9 @@ import os
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.basemem.storage.db import StorageManager
-from src.basemem.retrieval.engine import RetrievalEngine
 from src.basemem.graph.engine import GraphEngine
 from src.basemem.orchestrator.context import ContextOrchestrator
 from src.basemem.storage.sessions import SessionManager
-from src.basemem.processing.summarizer import LocalSummarizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,21 +27,16 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Initialize BaseMem components (Lazily)
 _db = None
-_retrieval = None
 _graph = None
-_orchestrator = None
 
 def get_db():
     global _db
     if _db is None:
-        _db = StorageManager("basemem.db")
+        # Default path in Home directory
+        home = Path.home()
+        db_path = home / ".basemem" / "basemem.db"
+        _db = StorageManager(str(db_path))
     return _db
-
-def get_retrieval():
-    global _retrieval
-    if _retrieval is None:
-        _retrieval = RetrievalEngine(get_db())
-    return _retrieval
 
 def get_graph():
     global _graph
@@ -51,24 +44,15 @@ def get_graph():
         _graph = GraphEngine(get_db())
     return _graph
 
-def get_orchestrator():
-    global _orchestrator
-    if _orchestrator is None:
-        _orchestrator = ContextOrchestrator(get_db())
-    return _orchestrator
-
-
 @app.route("/", methods=["GET"])
 def index():
     """Serve the galaxy visualization UI"""
     try:
-        # Find the html file in the project root
         ui_path = Path(__file__).parent.parent.parent / "graph_visualization.html"
         with open(ui_path, "r") as f:
             return f.read()
     except Exception as e:
         return f"Error loading UI: {str(e)}", 500
-
 
 @app.route("/api/graph", methods=["GET"])
 def get_graph_data():
@@ -77,12 +61,8 @@ def get_graph_data():
         db_instance = get_db()
         graph_instance = get_graph()
         nodes = db_instance.get_all_nodes()
-        edges = []
+        edges = db_instance.get_edges()
         
-        for node in nodes:
-            edges.extend(db_instance.get_edges(from_id=node.id))
-        
-        # Convert to JSON-serializable format
         nodes_data = [
             {
                 "id": n.id,
@@ -103,7 +83,6 @@ def get_graph_data():
                 "target": e.to_id,
                 "type": e.edge_type.value,
                 "weight": e.weight,
-                "confidence": e.confidence,
             }
             for e in edges
         ]
@@ -116,7 +95,6 @@ def get_graph_data():
     except Exception as e:
         logger.error(f"Error getting graph: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/node/<node_id>", methods=["GET"])
 def get_node(node_id):
@@ -161,7 +139,6 @@ def get_node(node_id):
         logger.error(f"Error getting node {node_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/api/node/<node_id>", methods=["DELETE"])
 def delete_node(node_id):
     """Delete a specific node"""
@@ -173,130 +150,59 @@ def delete_node(node_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/search", methods=["POST"])
-def search():
-    """Search knowledge base"""
+@app.route("/api/node", methods=["POST"])
+def create_node():
+    """Manually create a new knowledge node"""
     try:
         data = request.get_json()
-        query = data.get("query", "")
+        from src.basemem.models import Node, NodeType
+        import uuid
         
-        if not query:
-            return jsonify({"error": "Query required"}), 400
+        node = Node(
+            id=data.get("id") or f"manual-{uuid.uuid4().hex[:8]}",
+            title=data.get("title", "New Node"),
+            content=data.get("content", ""),
+            node_type=NodeType(data.get("type", "concept")),
+            keywords=data.get("keywords", [])
+        )
         
-        retrieval_instance = get_retrieval()
-        results = retrieval_instance.retrieve(query, top_k=10)
-        
-        return jsonify({
-            "query": query,
-            "results": [
-                {
-                    "id": r.node.id,
-                    "title": r.node.title,
-                    "content": r.node.content[:200] + "..." if len(r.node.content) > 200 else r.node.content,
-                    "score": r.score,
-                    "source": r.source,
-                    "type": r.node.node_type.value,
-                }
-                for r in results
-            ],
-        })
-    except Exception as e:
-        logger.error(f"Error searching: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/ask", methods=["POST"])
-def ask():
-    """Ask question (full RAG pipeline)"""
-    try:
-        data = request.get_json()
-        query = data.get("query", "")
-        
-        if not query:
-            return jsonify({"error": "Query required"}), 400
-        
-        orchestrator_instance = get_orchestrator()
-        context_packet = orchestrator_instance.orchestrate(query)
-        
-        return jsonify({
-            "query": query,
-            "context": {
-                "concept": context_packet.concept,
-                "related": context_packet.related,
-                "facts": context_packet.facts,
-                "examples": context_packet.examples,
-                "token_count": context_packet.token_count,
-            },
-        })
-    except Exception as e:
-        logger.error(f"Error orchestrating context: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/stats", methods=["GET"])
-def stats():
-    """Get knowledge base statistics"""
-    try:
         db_instance = get_db()
-        graph_instance = get_graph()
-        stats_data = graph_instance.get_graph_stats()
-        nodes = db_instance.get_all_nodes()
+        db_instance.add_node(node)
         
-        return jsonify({
-            **stats_data,
-            "avg_node_weight": sum(n.weight for n in nodes) / len(nodes) if nodes else 0,
-        })
+        # Trigger auto-linking
+        graph_instance = get_graph()
+        graph_instance.auto_link_nodes(node.id)
+        
+        return jsonify({"status": "success", "node_id": node.id})
     except Exception as e:
-        logger.error(f"Error getting stats: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/session/turn", methods=["POST"])
 def session_turn():
-    """Execute a complete session turn (log + summarize + export)"""
+    """Log a complete turn and update summary"""
     try:
         data = request.get_json()
         topic = data.get("topic")
         message = data.get("message")
         summary = data.get("summary")
+        agent_id = data.get("agent_id", "default")
         sender = data.get("sender", "ai")
-        model = data.get("model", "t5-small")
 
         if not topic or not message:
             return jsonify({"error": "Topic and message required"}), 400
 
         db_instance = get_db()
         manager = SessionManager(db_instance)
-        manager.log_chat(topic, message, sender=sender)
+        manager.log_chat(topic, message, sender=sender, agent_id=agent_id)
 
         if summary:
-            summary_text = summary
-        else:
-            history = manager.get_session_history(topic)
-            summarizer = LocalSummarizer(model_name=model)
-            summary_text = summarizer.summarize_chat_history(history)
-
-        if summary_text:
-            manager.update_summary(topic, summary_text)
-            
-            # Export to file
-            output_file = f".basemem-{topic}-summary.md"
-            with open(output_file, "w") as f:
-                f.write(f"# Session Summary: {topic}\n\n")
-                f.write(summary_text)
-                f.write(f"\n\n---\n*Last Updated: {manager.get_or_create_session(topic).last_accessed.isoformat()}*")
-
-            return jsonify({
-                "status": "success",
-                "summary": summary_text,
-                "file": output_file
-            })
-        else:
-            return jsonify({"error": "Summarization failed"}), 500
+            session_node = manager.update_summary(topic, summary)
+            return jsonify({"status": "success", "summary": summary})
+        
+        return jsonify({"status": "success", "logged": True})
     except Exception as e:
         logger.error(f"Error in session turn: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/session/bootstrap", methods=["POST"])
 def session_bootstrap():
@@ -304,92 +210,54 @@ def session_bootstrap():
     try:
         data = request.get_json()
         topic = data.get("topic")
-        target_path = data.get("path", ".") # Allow specifying a folder
-        
-        if not topic:
-            return jsonify({"error": "Topic required"}), 400
+        target_path = data.get("path", ".")
+        if not topic: return jsonify({"error": "Topic required"}), 400
 
         db_instance = get_db()
         manager = SessionManager(db_instance)
         manager.get_or_create_session(topic)
 
-        # Create AGENTS.md in the target path
         agents_file = Path(target_path) / "AGENTS.md"
-        content = f"""# Universal Agent Rules & Memory Protocol
+        content = f"# AI Memory Protocol: {topic}\n\nStart: `kb session context` | Turn: `kb session turn` | Sync: `kb session sync`"
+        with agents_file.open("w") as f: f.write(content)
 
-## 🧠 Compact Memory Protocol
-This project uses a 2-node hierarchical memory in BaseMem.
-
-### 1. The Structure
-- **Node A (Summary)**: Concise project status.
-- **Node B (Main History)**: A single large node containing the entire chat history.
-
-### 2. Mandatory Workflow
-After EVERY response you give, you MUST run this command to update the memory:
-```bash
-kb session turn "{topic}" "<Brief log of this turn>" --sender ai
-```
-
-### 3. Start of Session
-1. Read the .basemem-{topic}-summary.md file for context.
-2. For deep technical details, read the Main History node:
-   `kb session read "{topic}"`
-"""
-        with agents_file.open("w") as f:
-            f.write(content)
-
-        return jsonify({"status": "success", "topic": topic, "agents_file": str(agents_file.absolute())})
+        return jsonify({"status": "success", "topic": topic})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/session/read/<topic>", methods=["GET"])
 def session_read(topic):
-    """Read the full history for a topic"""
+    """Read history for a topic"""
     try:
         db_instance = get_db()
         manager = SessionManager(db_instance)
-        # 1. Try deterministic ID first
-        history_node_id = f"main-history-{topic.lower().replace(' ', '-')}"
-        node = db_instance.get_node(history_node_id)
+        agent_id = request.args.get("agent_id", "default")
         
-        # 2. If not found, find the summary node and look for linked conversation nodes
+        node_id = f"history-{agent_id}-{topic.lower().replace(' ', '-')}"
+        node = db_instance.get_node(node_id)
+        
         if not node:
-            session_node = manager.get_or_create_session(topic)
-            history = manager.get_session_history(topic)
-            # Find the first node marked as main history
-            node = next((n for n in history if n.metadata.get("is_main_history")), None)
-            
-            # 3. If still not found, just return the summary content as a fallback
-            if not node:
-                node = session_node
+            # Fallback to shared summary
+            node = manager.get_or_create_session(topic)
 
         if node:
-            return jsonify({
-                "topic": topic,
-                "title": node.title,
-                "content": node.content,
-                "node_id": node.id
-            })
-        return jsonify({"error": "History not found"}), 404
+            return jsonify({"topic": topic, "content": node.content})
+        return jsonify({"error": "Not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 def _get_node_color(node_type: str) -> str:
     """Map node type to color"""
     colors = {
-        "concept": "#4CAF50",
+        "concept": "#7c3aed",
         "fact": "#2196F3",
-        "summary": "#FF9800",
-        "conversation": "#9C27B0",
+        "summary": "#f97316",
+        "conversation": "#06b6d4",
         "task": "#F44336",
         "question": "#FFC107",
         "example": "#00BCD4",
     }
     return colors.get(node_type, "#757575")
 
-
 if __name__ == "__main__":
-    logger.info("Starting BaseMem web server on http://localhost:5000")
     app.run(host="0.0.0.0", port=5000, debug=False)

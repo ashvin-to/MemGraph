@@ -18,7 +18,7 @@ sys.path.insert(0, str(BASE_DIR / "src"))
 try:
     from basemem.cli import cli
     if __name__ == '__main__':
-        cli()
+        cli(prog_name='mem')
 except ImportError as e:
     print(f"Error: Could not find BaseMem source in {BASE_DIR}")
     print(f"Details: {e}")

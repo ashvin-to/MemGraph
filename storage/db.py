@@ -2,6 +2,7 @@
 
 import sqlite3
 import json
+import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -17,17 +18,14 @@ class StorageManager:
 
     def __init__(self, db_path: Optional[str] = None):
         """Initialize storage manager"""
-        # DEFAULT: Use the central global database
-        # This ensures all folders share the same 'Brain'
+        # DEFAULT: Use a hidden folder in the user home directory
         if db_path is None:
-            # Absolute path to the central database
-            db_path = "/mnt/Storage/BaseMem/basemem.db"
+            home = Path.home()
+            db_dir = home / ".basemem"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / "basemem.db"
             
         self.db_path = Path(db_path)
-        
-        # Create parent directories if needed
-        if not self.db_path.parent.exists():
-             self.db_path.parent.mkdir(parents=True, exist_ok=True)
              
         # Enable thread-safe mode for Flask/multi-threaded use
         self.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
@@ -135,11 +133,18 @@ class StorageManager:
             metadata_json,
         ))
 
-        # Insert into FTS table
+        cursor.execute("SELECT rowid FROM nodes WHERE id = ?", (node.id,))
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError(f"Node insert failed for {node.id}")
+
+        # Insert into FTS table. This is an external-content FTS table, so its
+        # rowid must stay aligned with nodes.rowid.
         cursor.execute("""
-            INSERT OR REPLACE INTO nodes_fts(id, title, content, keywords)
-            VALUES (?, ?, ?, ?)
+            INSERT OR REPLACE INTO nodes_fts(rowid, id, title, content, keywords)
+            VALUES (?, ?, ?, ?, ?)
         """, (
+            row["rowid"],
             node.id,
             node.title,
             node.content,
@@ -192,12 +197,32 @@ class StorageManager:
     def search_nodes_fts(self, query: str, limit: int = 50) -> List[str]:
         """Full-text search on nodes (FTS5)"""
         cursor = self.connection.cursor()
-        cursor.execute("""
-            SELECT id FROM nodes_fts WHERE nodes_fts MATCH ?
-            LIMIT ?
-        """, (query, limit))
-        rows = cursor.fetchall()
-        return [row[0] for row in rows]
+        search_query = self._build_fts_query(query)
+        if not search_query:
+            return []
+        try:
+            cursor.execute("""
+                SELECT id FROM nodes_fts WHERE nodes_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+            """, (search_query, limit))
+            rows = cursor.fetchall()
+            return [row[0] for row in rows]
+        except sqlite3.DatabaseError as exc:
+            logger.warning("FTS search failed; falling back to LIKE search: %s", exc)
+            # Fallback for complex queries
+            cursor.execute("""
+                SELECT id FROM nodes WHERE title LIKE ? OR content LIKE ? OR keywords LIKE ?
+                LIMIT ?
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", limit))
+            rows = cursor.fetchall()
+            return [row[0] for row in rows]
+
+    @staticmethod
+    def _build_fts_query(query: str) -> str:
+        """Convert user text into a safe FTS5 prefix query."""
+        terms = re.findall(r"[\w]+", query)
+        return " ".join(f'"{term}"*' for term in terms)
 
     def get_neighbors(self, node_id: str, edge_type: Optional[EdgeType] = None) -> List[str]:
         """Get all nodes connected to a given node"""
@@ -263,8 +288,11 @@ class StorageManager:
         """Delete a node and its edges"""
         cursor = self.connection.cursor()
 
-        # Delete from FTS table
-        cursor.execute("DELETE FROM nodes_fts WHERE id = ?", (node_id,))
+        cursor.execute("SELECT rowid FROM nodes WHERE id = ?", (node_id,))
+        row = cursor.fetchone()
+        if row is not None:
+            # Delete from FTS table by rowid to keep the external-content index aligned.
+            cursor.execute("DELETE FROM nodes_fts WHERE rowid = ?", (row["rowid"],))
 
         # Delete edges
         cursor.execute("""

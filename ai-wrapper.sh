@@ -1,43 +1,53 @@
 #!/bin/bash
-
-# INTERCEPTOR v2: Universal AI Memory Proxy
-# Works for Gemini, Codex, Claude, and more.
-
-COMMAND="$1"
+# 🌌 UNIVERSAL AI MEMORY PROXY (Stability Fix)
 TOPIC=$(basename "$PWD")
+ANCHOR=$(date +%s)
 
-echo "🛰️  BaseMem: Memory Proxy active for '$TOPIC'..."
-
-# 1. RUN THE AI COMMAND
-# We let the AI work first. 
+# 1. RUN THE AI
 "$@"
 
-# 2. DISCOVER IDENTITY (AFTER session ends)
-# We look for the most recently modified JSON file in all known AI temp paths.
-echo "🔍 BaseMem: Hunting for recent session logs..."
-
-SEARCH_PATHS=(
-    "$HOME/.gemini/tmp/*/chats/*.json"
-    "$HOME/.codex/tmp/*.json"
-    "$HOME/.claude/tmp/*.json"
-    "/tmp/ai-chats/*.json"
-)
-
-# Find the newest file across all paths
-NEWEST_FILE=$(ls -t ${SEARCH_PATHS[@]} 2>/dev/null | head -n 1)
+# 2. DISCOVER IDENTITY
+# Any AI can integrate by setting BASEMEM_SESSION_FILE and optionally
+# BASEMEM_AGENT_ID / BASEMEM_TOPIC. The fallback discovery covers common CLIs.
+TOPIC="${BASEMEM_TOPIC:-$TOPIC}"
+NEWEST_FILE="${BASEMEM_SESSION_FILE:-}"
 
 if [ -z "$NEWEST_FILE" ]; then
-    echo "⚠️  BaseMem: Could not find a recent log file. Skipping sync."
-    exit 0
+    SEARCH_DIRS=(
+        "$HOME/.gemini/tmp"
+        "$HOME/.codex/sessions"
+        "$HOME/.claude"
+        "$HOME/.config"
+        "/tmp/ai-chats"
+        "/tmp"
+    )
+    NEWEST_FILE=$(find "${SEARCH_DIRS[@]}" \( -name "*.json" -o -name "*.jsonl" \) -newermt "@$ANCHOR" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
 fi
 
-# Extract the ID suffix from the filename
-# Example: session-2026-04-19-a6aea9a0.json -> a6aea9a0
-AGENT_ID=$(echo "$NEWEST_FILE" | rev | cut -d'-' -f1 | cut -d'.' -f2 | rev)
+if [ ! -z "$NEWEST_FILE" ]; then
+    FILE_NAME=$(basename "$NEWEST_FILE")
+    if [ ! -z "$BASEMEM_AGENT_ID" ]; then
+        AGENT_ID="$BASEMEM_AGENT_ID"
+    elif [[ "$FILE_NAME" == rollout-*.jsonl ]]; then
+        AGENT_ID=$(echo "$FILE_NAME" | grep -oP '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+    else
+        AGENT_ID=$(echo "$FILE_NAME" | rev | cut -d'-' -f1 | cut -d'.' -f2 | rev)
+    fi
+    
+    # 3. CLEAN TOPIC EXTRACTION
+    # Using a simpler grep/sed combo that won't confuse the shell
+    EXTRACTED_TOPIC=$(grep -oP '(-t|--topic)\s+\K(\\")?[^\\"]+(\\")?' "$NEWEST_FILE" | tail -n 1 | sed 's/\\"//g; s/\"//g')
+    
+    if [ ! -z "$EXTRACTED_TOPIC" ]; then
+        TOPIC="$EXTRACTED_TOPIC"
+        echo "🎯 BaseMem: Locked to project planet: '$TOPIC'"
+    fi
 
-echo "💾 BaseMem: Found log from Agent [$AGENT_ID]. Syncing to Graph..."
+    if [ -z "$AGENT_ID" ]; then
+        AGENT_ID=$(basename "$1")
+    fi
 
-# 3. PERFORM THE SYNC
-kb session sync "$TOPIC" --agent-id "$AGENT_ID"
-
+    echo "💾 BaseMem: Archiving Technical Moon for [$TOPIC] (Agent: $AGENT_ID)..."
+    kb session sync --topic "$TOPIC" --agent-id "$AGENT_ID" --file "$NEWEST_FILE"
+fi
 echo "✅ Galaxy Updated."

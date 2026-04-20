@@ -16,7 +16,35 @@ class IngestWorker:
 
     def __init__(self, storage: StorageManager):
         self.storage = storage
+        self._model = None # Lazy load
         self.graph = GraphEngine(storage)
+
+    @property
+    def model(self):
+        """Lazy load the embedding model"""
+        if self._model is None:
+            logger.info("Loading embedding model into RAM...")
+            from sentence_transformers import SentenceTransformer
+            self._model = SentenceTransformer("all-MiniLM-L6-v2")
+        return self._model
+
+    def unload(self):
+        """Unload model to free RAM/CUDA immediately"""
+        if self._model is not None:
+            logger.info("Unloading embedding model from RAM...")
+            del self._model
+            self._model = None
+            
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+                
+            import gc
+            gc.collect()
+            logger.info("RAM Purge Complete.")
 
     async def process_text(
         self,
@@ -28,7 +56,7 @@ class IngestWorker:
         Process raw text into knowledge nodes. 
         Uses Keyword-Gravity for linking (Zero RAM).
         """
-        # Step 1: Semantic chunking (simple sentence split)
+        # Step 1: Chunking
         chunks = self._chunk_text(text)
         logger.info(f"Created {len(chunks)} chunks from input text")
 
@@ -46,7 +74,7 @@ class IngestWorker:
         return created_nodes
 
     def _chunk_text(self, text: str, chunk_size: int = 500) -> List[str]:
-        """Split text into manageable chunks by length (No NLTK needed)"""
+        """Split text into manageable chunks by length"""
         words = text.split()
         chunks = []
         current_chunk = []
@@ -85,10 +113,31 @@ class IngestWorker:
 
     @staticmethod
     def _extract_keywords(text: str, top_k: int = 8) -> List[str]:
-        """Extract keywords from text (Dumb frequency-based approach)"""
+        """Extract keywords from text"""
         stop_words = {"the", "and", "this", "that", "with", "from", "your", "have", "been", "will"}
         words = [w.lower().strip(".,!?:;\"") for w in text.split()]
         keywords = [w for w in words if len(w) > 4 and w not in stop_words]
-        
-        # Return unique keywords
         return list(set(keywords))[:top_k]
+
+    @staticmethod
+    def _cosine_similarity(vec1, vec2) -> float:
+        """Calculate cosine similarity between two vectors"""
+        import numpy as np
+
+        if hasattr(vec1, 'cpu'):
+            vec1 = vec1.cpu().detach().numpy()
+        if hasattr(vec2, 'cpu'):
+            vec2 = vec2.cpu().detach().numpy()
+
+        if isinstance(vec1, list):
+            vec1 = np.array(vec1)
+        if isinstance(vec2, list):
+            vec2 = np.array(vec2)
+
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return float(np.dot(vec1, vec2) / (norm1 * norm2))

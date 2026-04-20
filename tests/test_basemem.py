@@ -118,12 +118,11 @@ class TestGraph:
 class TestProcessing:
     """Test processing pipeline"""
 
-    @pytest.mark.asyncio
-    async def test_ingest_text(self, temp_db):
+    def test_ingest_text(self, temp_db):
         pipeline = ProcessingPipeline(temp_db)
         text = "This is a test sentence. This is another test sentence."
 
-        nodes = await pipeline.ingest_text(text, source="test")
+        nodes = asyncio.run(pipeline.ingest_text(text, source="test"))
 
         assert len(nodes) > 0
         assert all(isinstance(n, Node) for n in nodes)
