@@ -44,17 +44,17 @@ if [ ! -z "$NEWEST_FILE" ]; then
     
     if [ ! -z "$EXTRACTED_TOPIC" ]; then
         TOPIC="$EXTRACTED_TOPIC"
-        echo "🎯 BaseMem: Locked to project planet: '$TOPIC'"
+        echo "BaseMem: Locked to project planet: '$TOPIC'"
     fi
 
     if [ -z "$AGENT_ID" ]; then
         AGENT_ID=$(basename "$1")
     fi
 
-    echo "🪐 BaseMem: Compacting planet [$TOPIC]..."
+    echo "BaseMem: Compacting planet [$TOPIC]..."
     kb planet compact "$TOPIC" --agent-id "$AGENT_ID" >/dev/null 2>&1 || true
-    echo "💾 BaseMem: Archiving moon for [$TOPIC] (Agent: $AGENT_ID)..."
+    echo "BaseMem: Archiving moon for [$TOPIC] (Agent: $AGENT_ID)..."
     kb session sync --topic "$TOPIC" --agent-id "$AGENT_ID" --file "$NEWEST_FILE"
 fi
-echo "✅ Galaxy Updated."
+echo "BaseMem: Galaxy Updated."
 exit "$STATUS"

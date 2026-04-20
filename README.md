@@ -21,26 +21,40 @@ cd ~/my-project
 kb session bootstrap "project-name"
 ```
 
-# Add a large file (like a technical manual or PDF transcript)
+### Add a large file (like a technical manual or PDF transcript)
+```bash
 kb add --file path/to/document.txt --source "manual"
+```
 
-# Log an AI turn (Log + Summarize + Link)
+### Log an AI turn (Log + Summarize + Link)
+```bash 
 kb session turn "my-topic" "Technical response content..." --sender ai
+```
 
-# Read full project history
+### Read full project history
+```bash
 kb session read "my-topic"
+```
 
-# Search for information
+### Search for information
+```bash
 kb search "what is machine learning"
+```
 
-# Ask a question (full RAG pipeline)
+### Ask a question (full RAG pipeline)
+```bash
 kb ask "explain machine learning"
+```
 
-# Explore the knowledge graph
+### Explore the knowledge graph
+```
 kb graph <node-id>
+```
 
-# View statistics
+### View statistics
+```
 kb stats
+```
 ```
 
 ## Ingesting AI Chat History

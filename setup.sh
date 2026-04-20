@@ -125,6 +125,6 @@ if [ ! -z "$CONF_FILE" ]; then
 fi
 
 echo "------------------------------------------------"
-echo "✅ UNIVERSAL GALAXY READY!"
-echo "🚀 Supports: Gemini, Codex, and Claude."
+echo "UNIVERSAL GALAXY READY!"
+echo "Supports: Gemini, Codex, and Claude."
 echo "------------------------------------------------"
