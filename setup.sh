@@ -63,32 +63,18 @@ BASEMEM_DB_PATH="$DATA_DIR/basemem.db"
 
 # --- Shared agent guidance (written to CODEX.md, AGENTS.md) ---
 AGENT_GUIDANCE=$(cat <<'GUIDANCE'
-# BaseMem Memory Protocol — Mandatory Rules
+# BaseMem — 3 tools
 
-## Rule 1: Skip standalone questions
-Standalone programming questions, definitions, math, trivia — answer directly. Zero MCP calls. Do not over-apply memory.
+## Memory (optional)
+`basemem-memory_get_agent_context(project='folder')` — past state/decisions.
+Only needed for session recovery; otherwise skip.
 
-## Rule 2: You MUST check memory for project context
-When the question touches an existing project, topic, past decision, or ongoing work:
-1. `list_planets` — find the right topic
-2. `get_agent_context(topic, query)` — read prior context
-3. Use what you find. Do not re-ask what's already recorded.
+## Code
+`basemem-memory_code_find('symbol')` — finds everything. Auto-indexes. Single match = detail+callers.
+**Never Read to find something. This replaces Read.**
 
-## Rule 3: You MUST use code graph before reading source files
-Before opening any source file:
-1. Run `code_init(project_root)` if no `.basemem.code.db` exists
-2. Use `code_search`/`code_node`/`code_callers`/`code_callees` instead of `Read`
-3. **Only read the file** if you still need the full implementation body
-
-⚠️ **You will default to `Read` because it's the most basic tool. Break this habit.** A single `code_search` call (~200 tokens) beats reading a source file (~4000+ tokens). If you catch yourself thinking "I'll just Read the file" — STOP and check the code graph first.
-
-## Rule 4: You MUST log every interaction that used memory
-After answering, call all three:
-1. `add_note(topic, kind="decision", content="...")` for each architectural choice
-2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
-3. `log_turn(topic, content="what I did")` — lightweight activity record
-
-**Failure mode:** If you skip writes, the next session starts from zero. Prior decisions are lost.
+## Write
+`basemem-memory_log_interaction(topic, decision, current_state, next_step, activity)` — only when state changes.
 GUIDANCE
 )
 
@@ -126,32 +112,18 @@ cp -r "$BASE_DIR/extensions/gemini/." "$BASEMEM_EXT_DIR"
 
 echo "Installing Gemini AGENTS.md (global startup rules)..."
 cat <<'AGENTS_MD' >"$HOME/.gemini/config/AGENTS.md"
-# BaseMem Memory Protocol — Mandatory Rules
+# BaseMem — 3 tools
 
-## Rule 1: Skip standalone questions
-Standalone programming questions, definitions, math, trivia — answer directly. Zero MCP calls. Do not over-apply memory.
+## Memory (optional)
+`basemem-memory_get_agent_context(project='folder')` — past state/decisions.
+Only needed for session recovery; otherwise skip.
 
-## Rule 2: You MUST check memory for project context
-When the question touches an existing project, topic, past decision, or ongoing work:
-1. `list_planets` — find the right topic
-2. `get_agent_context(topic, query)` — read prior context
-3. Use what you find. Do not re-ask what's already recorded.
+## Code
+`basemem-memory_code_find('symbol')` — finds everything. Auto-indexes. Single match = detail+callers.
+**Never Read to find something. This replaces Read.**
 
-## Rule 3: You MUST use code graph before reading source files
-Before opening any source file:
-1. Run `code_init(project_root)` if no `.basemem.code.db` exists
-2. Use `code_search`/`code_node`/`code_callers`/`code_callees` instead of `Read`
-3. **Only read the file** if you still need the full implementation body
-
-⚠️ **You will default to `Read` — it's the most basic tool. Break this habit.** A single `code_search` call (~200 tokens) beats reading a source file (~4000+). If you catch yourself thinking "I'll just Read the file" — STOP and check code graph first.
-
-## Rule 4: You MUST log every interaction that used memory
-After answering, call all three:
-1. `add_note(topic, kind="decision", content="...")` for each architectural choice
-2. `update_planet(topic, current_state="...", next_step="...")` to persist progress
-3. `log_turn(topic, content="what I did")` — lightweight activity record
-
-**Failure mode:** If you skip writes, the next session starts from zero. Prior decisions are lost.
+## Write
+`basemem-memory_log_interaction(topic, decision, current_state, next_step, activity)` — only when state changes.
 AGENTS_MD
 
 echo "Installing Antigravity plugin..."
@@ -202,31 +174,21 @@ mkdir -p "$CODEX_SKILL_DIR/agents"
 cat <<'CODEX_SKILL' >"$CODEX_SKILL_DIR/SKILL.md"
 ---
 name: basemem
-description: BaseMem memory protocol — mandatory project context, code graph, and write-back rules
+description: BaseMem — 3 tools
 ---
 
-## Rule 1: Skip standalone questions
-Standalone programming questions, definitions, math, trivia — answer directly. Zero MCP calls.
+# BaseMem — 3 tools
 
-## Rule 2: You MUST check memory for project context
-When the question touches an existing project, topic, past decision, or ongoing work:
-1. `list_planets` + `get_agent_context(topic, query)` — read prior context
-2. Use what you find. Do not re-ask what's already recorded.
+## Memory (optional)
+`basemem-memory_get_agent_context(project='folder')` — past state/decisions.
+Only needed for session recovery; otherwise skip.
 
-## Rule 3: You MUST use code graph before reading source files
-Before opening any source file:
-1. Run `code_init(project_root)` if no `.basemem.code.db` exists
-2. Use `code_search`/`code_node`/`code_callers`/`code_callees` instead of Read
+## Code
+`basemem-memory_code_find('symbol')` — finds everything. Auto-indexes. Single match = detail+callers.
+**Never Read to find something. This replaces Read.**
 
-⚠️ **You will default to `Read` — it's the most basic tool. Break this habit.** A single `code_search` call (~200 tokens) beats reading a source file (~4000+). If you catch yourself thinking "I'll just Read the file" — STOP and check code graph first.
-
-## Rule 4: You MUST log every interaction that used memory
-After answering, call all three:
-1. `add_note(topic, kind, content)` — decisions, facts, issues
-2. `update_planet(topic, current_state, next_step)` — persist progress
-3. `log_turn(topic, content)` — activity record
-
-**Failure mode:** If you skip writes, the next session starts from zero. Prior decisions are lost.
+## Write
+`basemem-memory_log_interaction(topic, decision, current_state, next_step, activity)` — only when state changes.
 CODEX_SKILL
 cat <<'YAML' >"$CODEX_SKILL_DIR/agents/openai.yaml"
 interface:
