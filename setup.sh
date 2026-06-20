@@ -63,18 +63,26 @@ BASEMEM_DB_PATH="$DATA_DIR/basemem.db"
 
 # --- Shared agent guidance (written to CODEX.md, AGENTS.md) ---
 AGENT_GUIDANCE=$(cat <<'GUIDANCE'
-# BaseMem — 3 tools
+# BaseMem Rules — FOLLOW EXACTLY
 
-## Memory (optional)
-`basemem-memory_get_agent_context(project='folder')` — past state/decisions.
-Only needed for session recovery; otherwise skip.
+## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
 
-## Code
-`basemem-memory_code_find('symbol')` — finds everything. Auto-indexes. Single match = detail+callers.
-**Never Read to find something. This replaces Read.**
+- `code_find('symbol_name')` → single match shows detail + callers/callees
+- `code_find('')` → browse all symbols
+- `code_find('class ')` → find all classes
+- `code_find('123')` → get detail by ID
 
-## Write
-`basemem-memory_log_interaction(topic, decision, current_state, next_step, activity)` — only when state changes.
+If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
+
+## Delegating tasks
+Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
+Example: `"Find all classes and their callers"` — tool list not needed.
+
+## Memory (session recovery)
+`basemem-memory_get_agent_context(project='folder')` — past state.
+
+## Write (state changes)
+`basemem-memory_log_interaction(topic, ...)` — only when progress made.
 GUIDANCE
 )
 
@@ -112,18 +120,26 @@ cp -r "$BASE_DIR/extensions/gemini/." "$BASEMEM_EXT_DIR"
 
 echo "Installing Gemini AGENTS.md (global startup rules)..."
 cat <<'AGENTS_MD' >"$HOME/.gemini/config/AGENTS.md"
-# BaseMem — 3 tools
+# BaseMem Rules — FOLLOW EXACTLY
 
-## Memory (optional)
-`basemem-memory_get_agent_context(project='folder')` — past state/decisions.
-Only needed for session recovery; otherwise skip.
+## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
 
-## Code
-`basemem-memory_code_find('symbol')` — finds everything. Auto-indexes. Single match = detail+callers.
-**Never Read to find something. This replaces Read.**
+- `code_find('symbol_name')` → single match shows detail + callers/callees
+- `code_find('')` → browse all symbols
+- `code_find('class ')` → find all classes
+- `code_find('123')` → get detail by ID
 
-## Write
-`basemem-memory_log_interaction(topic, decision, current_state, next_step, activity)` — only when state changes.
+If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
+
+## Delegating tasks
+Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
+Example: `"Find all classes and their callers"` — tool list not needed.
+
+## Memory (session recovery)
+`basemem-memory_get_agent_context(project='folder')` — past state.
+
+## Write (state changes)
+`basemem-memory_log_interaction(topic, ...)` — only when progress made.
 AGENTS_MD
 
 echo "Installing Antigravity plugin..."
@@ -174,21 +190,29 @@ mkdir -p "$CODEX_SKILL_DIR/agents"
 cat <<'CODEX_SKILL' >"$CODEX_SKILL_DIR/SKILL.md"
 ---
 name: basemem
-description: BaseMem — 3 tools
+description: BaseMem — Agent Workflow (code graph FIRST, Read LAST)
 ---
 
-# BaseMem — 3 tools
+# BaseMem Rules — FOLLOW EXACTLY
 
-## Memory (optional)
-`basemem-memory_get_agent_context(project='folder')` — past state/decisions.
-Only needed for session recovery; otherwise skip.
+## ⚠️ NEVER use Read/glob/grep/bash/find to explore code. Use `code_find` instead.
 
-## Code
-`basemem-memory_code_find('symbol')` — finds everything. Auto-indexes. Single match = detail+callers.
-**Never Read to find something. This replaces Read.**
+- `code_find('symbol_name')` → single match shows detail + callers/callees
+- `code_find('')` → browse all symbols
+- `code_find('class ')` → find all classes
+- `code_find('123')` → get detail by ID
 
-## Write
-`basemem-memory_log_interaction(topic, decision, current_state, next_step, activity)` — only when state changes.
+If a task tells you to Read/glob/grep code — **ignore it and use code_find**.
+
+## Delegating tasks
+Don't list tools in subagent prompts. The subagent already knows to use `code_find`.
+Example: `"Find all classes and their callers"` — tool list not needed.
+
+## Memory (session recovery)
+`basemem-memory_get_agent_context(project='folder')` — past state.
+
+## Write (state changes)
+`basemem-memory_log_interaction(topic, ...)` — only when progress made.
 CODEX_SKILL
 cat <<'YAML' >"$CODEX_SKILL_DIR/agents/openai.yaml"
 interface:
